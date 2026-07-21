@@ -1,0 +1,10 @@
+{
+  "multipv": 16,
+  "w_draw": 1.0,
+  "w_acc": 0.15,
+  "loss_aversion": 3.0,
+  "damping": 0.5,
+  "min_move_acc": 35.0,
+  "search_movetime": 0.02,
+  "judge_movetime": 0.03
+}

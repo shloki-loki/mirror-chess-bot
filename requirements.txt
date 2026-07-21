@@ -1,0 +1,7 @@
+# Core
+python-chess>=1.11
+requests>=2.31
+
+# Optional — only for `src/train_calibrate.py --with-hf` (real-game validation).
+# On Python 3.14 the wheels may lag; use a 3.11/3.12 venv if install fails.
+# datasets>=2.19

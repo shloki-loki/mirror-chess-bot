@@ -1,0 +1,7 @@
+# Never commit these
+.venv/
+*.log
+*.env
+token*
+__pycache__/
+*.pyc
