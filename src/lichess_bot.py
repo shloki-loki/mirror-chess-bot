@@ -72,19 +72,31 @@ class LichessBot:
     # ---- event loop ------------------------------------------------------
     def run(self) -> None:
         _log("[lichess] streaming events — waiting for challenges...")
-        with self.s.get(f"{BASE}/api/stream/event", stream=True) as resp:
-            for line in resp.iter_lines():
-                if not line:
-                    continue
-                event = json.loads(line)
-                etype = event.get("type")
-                if etype == "challenge":
-                    self._on_challenge(event["challenge"])
-                elif etype == "gameStart":
-                    g = event["game"]
-                    gid = g.get("gameId") or g.get("id")
-                    threading.Thread(target=self._safe_play, args=(gid,),
-                                     daemon=True).start()
+        # Reconnect loop: a laptop sleep/wake or network blip silently kills the
+        # stream. The read timeout turns a dead socket into an exception (Lichess
+        # sends frequent keep-alives, so 65s of silence means it's really dead),
+        # and the loop reconnects instead of going permanently deaf.
+        while True:
+            try:
+                with self.s.get(f"{BASE}/api/stream/event",
+                                stream=True, timeout=(10, 65)) as resp:
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue                       # keep-alive ping
+                        event = json.loads(line)
+                        etype = event.get("type")
+                        if etype == "challenge":
+                            self._on_challenge(event["challenge"])
+                        elif etype == "gameStart":
+                            g = event["game"]
+                            gid = g.get("gameId") or g.get("id")
+                            threading.Thread(target=self._safe_play,
+                                             args=(gid,), daemon=True).start()
+            except requests.RequestException as e:
+                _log(f"[lichess] event stream error ({e}); reconnecting…")
+            else:
+                _log("[lichess] event stream ended; reconnecting…")
+            time.sleep(3)
 
     def _on_challenge(self, ch: dict) -> None:
         cid = ch["id"]
