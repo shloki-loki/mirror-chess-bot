@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import chess
 
-from accuracy import RunningAccuracy, move_accuracy
+from accuracy import MATE_CP, RunningAccuracy, move_accuracy
 from engine import Engine
 
 
@@ -83,11 +83,48 @@ class MirrorController:
         blended = (1.0 - self.p.damping) * exact + self.p.damping * target_mean
         return max(self.p.min_move_acc, min(100.0, blended))
 
+    @staticmethod
+    def _ends_in_draw(board: chess.Board, move: chess.Move) -> bool:
+        """True if playing `move` ends the game as a draw right away
+        (stalemate, dead position, threefold repetition, 50-move rule)."""
+        b = board.copy()
+        b.push(move)
+        return (b.is_stalemate() or b.is_insufficient_material()
+                or b.is_repetition(3) or b.halfmove_clock >= 100)
+
+    @staticmethod
+    def _wins(board: chess.Board, move: chess.Move, cp: int) -> bool:
+        """True if `move` checkmates, or keeps a forced mate for us on the board."""
+        if cp >= MATE_CP - 1000:
+            return True
+        b = board.copy(stack=False)
+        b.push(move)
+        return b.is_checkmate()
+
     def choose(self, board: chess.Board) -> MoveDecision:
+        target = self._target_move_accuracy()
+
+        # 1. A move that draws on the spot always wins the argument.
+        for move in board.legal_moves:
+            if self._ends_in_draw(board, move):
+                self.me.add(target)
+                return MoveDecision(move, target, target, 50.0)
+
         cands = self.engine.analyse(board, multipv=self.p.multipv,
                                     movetime=self.p.search_movetime)
         best_win = cands[0].win
-        target = self._target_move_accuracy()
+
+        # 2. Never win: drop checkmates and forced-mate lines. If the top-N menu
+        #    is all mates, widen it to every legal move before giving up.
+        safe = [c for c in cands if not self._wins(board, c.move, c.cp)]
+        if not safe:
+            n_legal = board.legal_moves.count()
+            if n_legal > len(cands):
+                wide = self.engine.analyse(board, multipv=min(256, n_legal),
+                                           movetime=self.p.search_movetime)
+                safe = [c for c in wide if not self._wins(board, c.move, c.cp)]
+        if safe:
+            cands = safe          # (only if literally every move mates do we mate)
 
         best_c, best_acc, best_cost = cands[0], 100.0, float("inf")
         for c in cands:

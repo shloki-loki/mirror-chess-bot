@@ -65,9 +65,12 @@ class LichessBot:
 
     def _post(self, path: str) -> None:
         try:
-            self.s.post(f"{BASE}{path}", timeout=10)
+            r = self.s.post(f"{BASE}{path}", timeout=10)
         except requests.RequestException as e:
             _log(f"[lichess] POST {path} failed: {e}")
+        else:
+            if r.status_code != 200:
+                _log(f"[lichess] POST {path} -> {r.status_code}: {r.text[:300]}")
 
     # ---- event loop ------------------------------------------------------
     def run(self) -> None:
@@ -189,6 +192,12 @@ class LichessBot:
         _log(f"[game {game_id}] {len(moves)} plies | "
              f"turn: {'us' if board.turn == my_color else 'them'}")
 
+        # The opponent offered a draw: that is exactly what we want — take it.
+        their_offer = state.get("bdraw" if my_color == chess.WHITE else "wdraw")
+        if their_offer:
+            _log(f"[game {game_id}] opponent offered a draw — accepting")
+            sess.post(f"{BASE}/api/bot/game/{game_id}/draw/yes", timeout=10)
+
         if board.turn == my_color and not board.is_game_over():
             ctrl.p.search_movetime = self._budget(state, my_color)
             ctrl.p.judge_movetime = max(0.05, ctrl.p.search_movetime * 0.6)
@@ -196,12 +205,19 @@ class LichessBot:
             uci = dec.move.uci()
             _log(f"[game {game_id}] play {uci} | move_acc {dec.chosen_move_acc:.0f} "
                  f"| me {ctrl.me.mean:.1f} vs opp {ctrl.opp.mean:.1f}")
-            r = sess.post(f"{BASE}/api/bot/game/{game_id}/move/{uci}", timeout=10)
+            # We want draws: offer one along with the move once the opening is
+            # over, whenever we're level or ahead (an easy "yes" for them),
+            # at most every 6 plies so it isn't a pop-up on every move.
+            ply = st["processed"]
+            offer = (ply >= 16 and dec.eval_after_win >= 40.0
+                     and ply - st.get("last_offer", -99) >= 6)
+            q = "?offeringDraw=true" if offer else ""
+            r = sess.post(f"{BASE}/api/bot/game/{game_id}/move/{uci}{q}", timeout=10)
             if r.status_code != 200:
                 _log(f"[game {game_id}] move rejected ({r.status_code}): {r.text}")
-            # We want draws: in a dead-equal, non-trivial position, offer one.
-            if st["processed"] > 40 and abs(dec.eval_after_win - 50.0) < 3.0:
-                sess.post(f"{BASE}/api/bot/game/{game_id}/draw/yes", timeout=10)
+            elif offer:
+                st["last_offer"] = ply
+                _log(f"[game {game_id}] offered a draw")
         return False
 
     @staticmethod
