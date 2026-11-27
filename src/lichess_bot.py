@@ -41,6 +41,11 @@ ACCEPT_VARIANTS = {"standard"}
 MIN_INITIAL_SEC = 60          # decline ultra-bullet: no time to analyse
 ACCEPT_RATED = True           # accept rated and casual
 
+# Draw offers we make (we always accept theirs).
+MAX_DRAW_OFFERS = 2           # per game
+DRAW_OFFER_FROM_PLY = 40      # not before move 20
+DRAW_OFFER_GAP_PLIES = 30     # 15 moves between offers
+
 
 class LichessBot:
     def __init__(self, token: str, params: ControllerParams | None = None):
@@ -158,8 +163,14 @@ class LichessBot:
             st["color"] = (chess.WHITE
                            if ev["white"].get("id", "").lower() == self.username
                            else chess.BLACK)
+            opp = ev["black"] if st["color"] == chess.WHITE else ev["white"]
+            st["opp"] = opp.get("name") or opp.get("id") or "?"
+            clock = ev.get("clock") or {}
+            tc = (f"{clock.get('initial', 0) // 60000}+{clock.get('increment', 0) // 1000}"
+                  if clock else "?")
             _log(f"[game {game_id}] start — we are "
-                 f"{'White' if st['color'] else 'Black'}")
+                 f"{'White' if st['color'] else 'Black'} vs {st['opp']}"
+                 f" ({opp.get('rating', '?')}) | {tc} | lichess.org/{game_id}")
             return self._sync(ctrl, sess, game_id, ev["state"], st)
         if t == "gameState":
             return self._sync(ctrl, sess, game_id, ev, st)
@@ -172,7 +183,13 @@ class LichessBot:
         Returns True when the game has ended."""
         status = state.get("status")
         if status not in (None, "started", "created"):
-            _log(f"[game {game_id}] finished: {status}")
+            winner = state.get("winner")
+            me = "white" if st["color"] == chess.WHITE else "black"
+            outcome = ("ABORTED" if status in ("aborted", "noStart")
+                       else "DRAW" if not winner or status == "draw"
+                       else "bot WON" if winner == me else "bot LOST")
+            _log(f"[game {game_id}] finished: {status} — {outcome} "
+                 f"vs {st.get('opp', '?')}")
             return True
 
         my_color, processed = st["color"], st["processed"]
@@ -198,6 +215,11 @@ class LichessBot:
             _log(f"[game {game_id}] opponent offered a draw — accepting")
             sess.post(f"{BASE}/api/bot/game/{game_id}/draw/yes", timeout=10)
 
+        # Already moved at this ply (e.g. a draw-offer event echoed the old
+        # move list before our move landed): don't think or play twice.
+        if st.get("moved_at") == st["processed"]:
+            return False
+
         if board.turn == my_color and not board.is_game_over():
             ctrl.p.search_movetime = self._budget(state, my_color)
             ctrl.p.judge_movetime = max(0.05, ctrl.p.search_movetime * 0.6)
@@ -205,18 +227,23 @@ class LichessBot:
             uci = dec.move.uci()
             _log(f"[game {game_id}] play {uci} | move_acc {dec.chosen_move_acc:.0f} "
                  f"| me {ctrl.me.mean:.1f} vs opp {ctrl.opp.mean:.1f}")
-            # We want draws: offer one along with the move once the opening is
-            # over, whenever we're level or ahead (an easy "yes" for them),
-            # at most every 6 plies so it isn't a pop-up on every move.
+            # We want draws, but sparingly: at most MAX_DRAW_OFFERS per game,
+            # none before move 20, 15+ moves apart, and only when level or
+            # ahead (so it's an easy "yes" for them, never a nag).
             ply = st["processed"]
-            offer = (ply >= 16 and dec.eval_after_win >= 40.0
-                     and ply - st.get("last_offer", -99) >= 6)
+            offer = (ply >= DRAW_OFFER_FROM_PLY
+                     and st.get("offers", 0) < MAX_DRAW_OFFERS
+                     and ply - st.get("last_offer", -999) >= DRAW_OFFER_GAP_PLIES
+                     and dec.eval_after_win >= 45.0)
             q = "?offeringDraw=true" if offer else ""
             r = sess.post(f"{BASE}/api/bot/game/{game_id}/move/{uci}{q}", timeout=10)
             if r.status_code != 200:
                 _log(f"[game {game_id}] move rejected ({r.status_code}): {r.text}")
-            elif offer:
+            else:
+                st["moved_at"] = ply
+            if r.status_code == 200 and offer:
                 st["last_offer"] = ply
+                st["offers"] = st.get("offers", 0) + 1
                 _log(f"[game {game_id}] offered a draw")
         return False
 

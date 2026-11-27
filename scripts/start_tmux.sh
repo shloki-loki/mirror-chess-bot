@@ -2,17 +2,21 @@
 # Start the bot inside a detached tmux session so it survives closing the
 # terminal. `caffeinate -i` keeps the Mac awake while the bot runs.
 #
+# The token is read by run_bot.sh from the private file that
+# scripts/set_token.sh writes, so it never appears on a command line.
+#
 # Usage:
-#   export LICHESS_TOKEN=lip_xxxxxxxx
+#   ./scripts/set_token.sh               # once, or whenever the token changes
 #   ./scripts/start_tmux.sh              # session name: mirrorbot
 #   ./scripts/start_tmux.sh mysession    # custom name
 set -euo pipefail
 
 SESSION="${1:-mirrorbot}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TOKEN_FILE="${MIRRORBOT_TOKEN_FILE:-$HOME/.config/mirrorbot/token}"
 
-if [[ -z "${LICHESS_TOKEN:-}" ]]; then
-  echo "ERROR: export LICHESS_TOKEN first, then re-run this script." >&2
+if [[ ! -r "$TOKEN_FILE" ]]; then
+  echo "ERROR: no saved token. Run ./scripts/set_token.sh first." >&2
   exit 1
 fi
 
@@ -22,10 +26,9 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   exit 0
 fi
 
-# -e injects the token into the tmux session environment (tmux >= 3.2) so it is
-# never placed on the bot's command line. `exec $SHELL` keeps the pane alive
-# after the bot exits so you can read any final output.
-tmux new-session -d -s "$SESSION" -e "LICHESS_TOKEN=$LICHESS_TOKEN" \
+# `env -u` keeps any LICHESS_TOKEN in this shell out of the tmux session, so
+# run_bot.sh always takes the saved file.
+env -u LICHESS_TOKEN tmux new-session -d -s "$SESSION" \
   "caffeinate -i '$ROOT/scripts/run_bot.sh' 2>&1 | tee -a '$ROOT/bot.log'; exec ${SHELL:-/bin/bash}"
 
 echo "Started tmux session '$SESSION'."
