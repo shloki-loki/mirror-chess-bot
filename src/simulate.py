@@ -35,10 +35,12 @@ def play_game(brain: Engine, opp: Engine, opp_elo: int, bot_white: bool,
         print(f"  {'-'*63}")
 
     ply = 0
+    bot_evals: list[float] = []          # bot's win% after each of its moves
     while not board.is_game_over(claim_draw=True) and ply < MAX_PLIES:
         ply += 1
         if board.turn == bot_color:
             dec = ctrl.choose(board)
+            bot_evals.append(dec.eval_after_win)
             san = board.san(dec.move)
             board.push(dec.move)
             if verbose:
@@ -73,6 +75,8 @@ def play_game(brain: Engine, opp: Engine, opp_elo: int, bot_white: bool,
         "opp_elo": opp_elo,
         "bot_white": bot_white,
         "result": result,
+        "eval_mean": sum(bot_evals) / len(bot_evals) if bot_evals else 50.0,
+        "eval_above": (sum(e >= 50.0 for e in bot_evals) / len(bot_evals)) if bot_evals else 0.0,
         "reason": reason,
         "bot_score": bot_score,           # 1 win / 0.5 draw / 0 loss, bot POV
         "plies": ply,
@@ -136,7 +140,7 @@ def main() -> None:
                 side = "White" if bw else "Black"
                 print(f"\n  >> opp Elo {elo} | bot {side} | {r['result']} "
                       f"({r['reason']}) | bot_acc {r['bot_acc']:.1f} "
-                      f"opp_acc {r['opp_acc']:.1f} | gap {r['gap']:.1f}")
+                      f"opp_acc {r['opp_acc']:.1f} | gap {r['gap']:.1f} | bot win% avg {r['eval_mean']:.0f}, at/above level {r['eval_above']:.0%}")
 
     n = len(rows)
     draws = sum(1 for r in rows if r["result"] == "1/2-1/2")

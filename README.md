@@ -5,9 +5,19 @@ its own [accuracy](#how-accuracy-is-defined) roughly level with the opponent's.
 It runs on Stockfish, but instead of playing the strongest move it picks the move
 that best balances two goals:
 
-1. **Draw-seek (primary).** Pull the evaluation back toward equal — fight at full
-   strength when behind, give the advantage back when ahead — so games tend to
-   end level. "Tie in all permutations" is the ideal it aims at.
+1. **Draw-seek (primary).** Aim for a *small edge* (about +1 pawn with all the
+   pieces on, shrinking to about +0.25 in the endgame) and let it merge into a
+   draw: from slightly better a draw is easy to force, from slightly worse it
+   isn't. It fights at full strength when behind and gives the advantage back
+   when well ahead (double-checking each give-back with a deeper search).
+   Closeness is judged in win% *and* in pawns, so a gifted mate-in-one or a
+   huge deficit doesn't blind it.
+   - **Forced draws first:** stalemate, threefold repetition, dead positions and
+     the 50-move rule are taken on sight; repeating moves and trading pieces
+     are preferred while it's near its target.
+   - **It doesn't checkmate you** — unless every other move would leave it
+     clearly lost (3+ pawns down), so ignoring its threats isn't free.
+   - **Draws:** it accepts every draw offer and makes at most two of its own.
 2. **Accuracy-match (secondary).** Among similarly drawish moves, pick the one
    that keeps its running accuracy tracking the opponent's.
 
@@ -73,17 +83,18 @@ you and is never shared.
 2. **Generate a token** with the `bot:play` scope while logged in as that account:
    <https://lichess.org/account/oauth/token/create?scopes[]=bot:play&description=MirrorBot>
    → *Create* → copy the token (shown once).
-3. **Point the bot at it:**
+3. **Save the token** (hidden prompt; stored in `~/.config/mirrorbot/token`,
+   readable only by you, never on a command line):
    ```bash
-   export LICHESS_TOKEN=lip_xxxxxxxxxxxx
+   ./scripts/set_token.sh
    ```
 4. **Upgrade the account to a BOT** (one-time, **irreversible**):
    ```bash
-   ./.venv/bin/python src/lichess_bot.py --upgrade
+   LICHESS_TOKEN="$(cat ~/.config/mirrorbot/token)" ./.venv/bin/python src/lichess_bot.py --upgrade
    ```
 5. **Run the bot:**
    ```bash
-   ./.venv/bin/python src/lichess_bot.py
+   ./scripts/run_bot.sh
    ```
 6. **Challenge it:** from your main account open the bot's profile and send a
    challenge (Standard, at least 1+0 — ultrabullet is auto-declined). It also
@@ -96,8 +107,12 @@ The bot handles multiple games at once, adapts think-time to its clock, and logs
 
 - **On your Mac (tmux)** — survives closing the terminal, keeps the Mac awake:
   ```bash
-  export LICHESS_TOKEN=lip_xxxx
   ./scripts/start_tmux.sh          # attach: tmux attach -t mirrorbot | logs: tail -f bot.log
+  ```
+- **Watch games live** — one line per challenge, game start (opponent, rating,
+  time control, link), draw offer and result, plus a macOS notification:
+  ```bash
+  ./scripts/watch_games.sh
   ```
 - **24/7 without your laptop (cloud)** — see [DEPLOY.md](DEPLOY.md) for a
   `systemd` service on a small Linux VM.
